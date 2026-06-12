@@ -1,0 +1,24 @@
+John Doe
+Email: john.doe@example.com
+Phone: +1 (555) 019-2834
+LinkedIn: https://linkedin.com/in/johndoe
+GitHub: https://github.com/johndoe
+
+Summary:
+Experienced software engineer with expertise in JavaScript, React, and Node.js.
+
+Skills:
+JavaScript, React, Node.js, Express, SQL, MongoDB, Git
+
+Experience:
+TechCorp
+Software Engineer
+2020 - Present
+- Developed and maintained web applications using React and Node.js.
+- Designed SQL database schemas.
+
+Education:
+University of Technology
+Bachelor of Science in Computer Science
+2016 - 2020
+GPA: 3.8
