@@ -11,8 +11,24 @@
  *   Education Match      = 10%
  *   Certifications Match =  5%
  *   Resume Structure     =  5%
+ *
+ * Skill Extraction Rules (applied to JD content before ATS scoring):
+ *   Category 1 - Technical Skills      → ALLOWED
+ *   Category 2 - Professional Skills   → ALLOWED
+ *   Category 3 - Company Information   → IGNORED
+ *   Category 4 - JD Section Headings   → IGNORED
+ *   Category 5 - Locations             → IGNORED
+ *   Category 6 - Generic Business Terms→ IGNORED
  * ─────────────────────────────────────────────────────────────────────────────
  */
+
+const {
+  extractJdSkills,
+  filterAndNormalizeSkills,
+  normForCompare,
+  validateSkill,
+  DOMAIN_EXPERTISE,
+} = require('./skillValidator');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,11 +58,6 @@ function ngrams(tokens) {
   return result;
 }
 
-/** Normalise skill name for comparison */
-function normSkill(s) {
-  return s.toLowerCase().replace(/[\s.\-_]/g, '');
-}
-
 // ─── Degree Level Detection ───────────────────────────────────────────────────
 
 const DEGREE_LEVELS = {
@@ -69,60 +80,46 @@ function detectDegreeLevel(text) {
 
 // ─── Skills Matching (35 points) ─────────────────────────────────────────────
 
+/**
+ * Score skills by:
+ *   1. Extract real skills from JD using skillValidator (filters company names,
+ *      section headings, locations, generic terms).
+ *   2. Normalize resume skills.
+ *   3. Match and find missing skills — only actual skills appear in either list.
+ */
 function scoreSkills(resumeSkills, jdText) {
-  if (!resumeSkills || resumeSkills.length === 0) return { score: 0, matched: [], missing: [], jdSkills: [] };
-
-  const jdTokens = tokenize(jdText);
-  const jdNgrams = ngrams(jdTokens);
-
-  // Extract skill-like terms from JD (capitalised words, known tech terms)
-  const techPattern = /\b([A-Z][a-zA-Z+#.]*(?:\s[A-Z][a-zA-Z+#.]*)?)\b/g;
-  const jdSkillCandidates = new Set();
-  let m;
-  while ((m = techPattern.exec(jdText)) !== null) {
-    if (m[1].length > 2 && !STOP_WORDS.has(m[1].toLowerCase())) {
-      jdSkillCandidates.add(m[1].trim());
-    }
+  if (!resumeSkills || resumeSkills.length === 0) {
+    return { score: 0, matched: [], missing: [], jdSkills: [] };
   }
 
-  // Also add all words > 3 chars from JD as possible skill requirements
-  tokenize(jdText).forEach(t => { if (t.length > 3) jdSkillCandidates.add(t); });
+  // ── Extract validated JD skills (Passes through all 6-category filters) ──
+  const jdSkills = extractJdSkills(jdText);
 
-  const matched = [];
-  const missing = [];
-  const resumeNormSet = new Set(resumeSkills.map(normSkill));
+  // ── Normalize resume skills through the same validator ──
+  const normalizedResumeSkills = filterAndNormalizeSkills(resumeSkills);
 
-  for (const jdSkill of jdSkillCandidates) {
-    const n = normSkill(jdSkill);
-    if (resumeNormSet.has(n) || jdNgrams.has(jdSkill.toLowerCase())) {
-      // Check if resume skill matches this JD term
-      const hit = resumeSkills.find(rs => normSkill(rs) === n || jdSkill.toLowerCase().includes(normSkill(rs)));
-      if (hit && !matched.includes(hit)) matched.push(hit);
-    }
-  }
+  // ── Build lookup sets for fast comparison ──
+  const resumeNormSet = new Set(normalizedResumeSkills.map(normForCompare));
+  const jdNormSet     = new Set(jdSkills.map(normForCompare));
 
-  // Skills in resume that appear in JD text directly
-  for (const rs of resumeSkills) {
-    const n = normSkill(rs);
-    const inJd = jdNgrams.has(rs.toLowerCase()) || [...jdSkillCandidates].some(c => normSkill(c) === n);
-    if (inJd && !matched.includes(rs)) matched.push(rs);
-  }
+  // ── Find matched skills: resume skills that appear in JD ──
+  const matched = normalizedResumeSkills.filter(rs => jdNormSet.has(normForCompare(rs)));
 
-  // Missing: JD skill candidates not in resume
-  const missingCandidates = [...jdSkillCandidates]
-    .filter(c => c.length > 2 && !resumeNormSet.has(normSkill(c)))
+  // ── Find missing skills: JD skills not in resume ──
+  const missing = jdSkills
+    .filter(js => !resumeNormSet.has(normForCompare(js)))
     .slice(0, 15);
 
-  // Score: ratio of resume skills that match JD
-  const ratio = resumeSkills.length > 0
-    ? Math.min(matched.length / Math.max(resumeSkills.length, 1), 1)
+  // ── Score: ratio of resume skills that match JD ──
+  const ratio = normalizedResumeSkills.length > 0
+    ? Math.min(matched.length / Math.max(jdSkills.length, 1), 1)
     : 0;
 
   return {
-    score: Math.round(ratio * 35),
-    matched: matched.slice(0, 20),
-    missing: missingCandidates.slice(0, 15),
-    jdSkills: [...jdSkillCandidates].slice(0, 30),
+    score:    Math.round(ratio * 35),
+    matched:  matched.slice(0, 20),
+    missing,
+    jdSkills: jdSkills.slice(0, 30),
   };
 }
 
@@ -179,38 +176,44 @@ function scoreExperience(experience, jdText) {
 
 // ─── Keyword Matching (20 points) ────────────────────────────────────────────
 
+/**
+ * Score keyword overlap between resume text and JD.
+ * Keywords are extracted from JD, then each is passed through validateSkill
+ * to ensure only actual competencies are counted — not generic business terms,
+ * company names, locations, or section headings.
+ */
 function scoreKeywords(resumeText, jdText) {
-  // Build a full resume text blob
   const resumeTokens = tokenize(resumeText);
   const jdTokens     = tokenize(jdText);
   const resumeNgrams = ngrams(resumeTokens);
-  const jdNgrams2    = ngrams(jdTokens);
 
-  // Important JD keywords: words that appear ≥2 times in JD are "key"
+  // Build frequency map of JD tokens
   const jdFreq = {};
   jdTokens.forEach(t => { jdFreq[t] = (jdFreq[t] || 0) + 1; });
-  const importantKeywords = Object.entries(jdFreq)
-    .filter(([word, c]) => c >= 2 && !STOP_WORDS.has(word))
-    .sort((a, b) => b[1] - a[1])
-    .map(([w]) => w)
-    .slice(0, 30);
 
-  // Fix the filter (use proper variable name)
-  const keyImportant = Object.entries(jdFreq)
+  // Extract candidate keywords (words with freq >= 1, length > 3)
+  const candidateKeywords = Object.entries(jdFreq)
     .filter(([word, c]) => c >= 1 && word.length > 3)
     .sort((a, b) => b[1] - a[1])
     .map(([w]) => w)
-    .slice(0, 30);
+    .slice(0, 50);
 
-  const matched = keyImportant.filter(k => resumeNgrams.has(k));
-  const missing = keyImportant.filter(k => !resumeNgrams.has(k)).slice(0, 15);
+  // ── Filter candidates through skill validator ──
+  // Only keep tokens that are actual skills/competencies
+  const validatedKeywords = candidateKeywords.filter(kw => {
+    const { valid } = validateSkill(kw);
+    return valid;
+  });
 
-  const ratio = keyImportant.length > 0
-    ? matched.length / keyImportant.length
+  const matched = validatedKeywords.filter(k => resumeNgrams.has(k));
+  const missing = validatedKeywords.filter(k => !resumeNgrams.has(k)).slice(0, 15);
+
+  const ratio = validatedKeywords.length > 0
+    ? matched.length / validatedKeywords.length
     : 0;
 
   return {
-    score: Math.round(ratio * 20),
+    score:   Math.round(ratio * 20),
     matched: matched.slice(0, 20),
     missing: missing.slice(0, 15),
   };
@@ -226,6 +229,7 @@ function scoreEducation(education, jdText) {
 
   let score;
   let analysis;
+  const gaps = [];
 
   if (requiredLevel === 0) {
     score    = education && education.length > 0 ? 8 : 5;
@@ -236,12 +240,17 @@ function scoreEducation(education, jdText) {
   } else if (resumeLevel > 0) {
     score    = Math.round((resumeLevel / requiredLevel) * 10);
     analysis = `Job may prefer a higher degree level. Consider highlighting relevant coursework or certifications.`;
+    const reqName = Object.keys(DEGREE_LEVELS).find(k => DEGREE_LEVELS[k] === requiredLevel) || 'higher degree';
+    const hasName = Object.keys(DEGREE_LEVELS).find(k => DEGREE_LEVELS[k] === resumeLevel) || 'degree';
+    gaps.push(`Education Gap: Required degree level is '${reqName}', but resume shows '${hasName}'.`);
   } else {
     score    = 3;
     analysis = `No matching education detected in resume. Consider adding your education details.`;
+    const reqName = Object.keys(DEGREE_LEVELS).find(k => DEGREE_LEVELS[k] === requiredLevel) || 'degree';
+    gaps.push(`Education Gap: Missing required '${reqName}' education in resume.`);
   }
 
-  return { score, analysis, requiredLevel, resumeLevel };
+  return { score, analysis, requiredLevel, resumeLevel, gaps };
 }
 
 // ─── Certifications Matching (5 points) ──────────────────────────────────────
@@ -375,6 +384,70 @@ function buildRecommendations(skillsResult, kwResult, expResult, structResult, a
 // ─── Main Analyze Function ────────────────────────────────────────────────────
 
 /**
+ * Identify Job Title, Seniority Level, Department, Industry, and Role Type from JD.
+ */
+function understandJd(jdText) {
+  if (!jdText) {
+    return {
+      jobTitle: 'Unknown',
+      seniorityLevel: 'Mid-level',
+      department: 'Engineering',
+      industry: 'Tech',
+      roleType: 'Full-time'
+    };
+  }
+
+  const lower = jdText.toLowerCase();
+
+  // 1. Job Title
+  const titles = [
+    'software engineer', 'product manager', 'marketing manager', 'hr manager',
+    'finance analyst', 'sales manager', 'business analyst', 'operations manager',
+    'consultant', 'designer', 'developer'
+  ];
+  let jobTitle = 'Software Engineer'; // sensible default
+  for (const t of titles) {
+    if (lower.includes(t)) {
+      jobTitle = t.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      break;
+    }
+  }
+
+  // 2. Seniority Level
+  let seniorityLevel = 'Mid-level';
+  if (/\b(senior|sr|lead|principal|staff|director|manager)\b/i.test(lower)) {
+    seniorityLevel = 'Senior';
+  } else if (/\b(junior|jr|entry|associate|intern)\b/i.test(lower)) {
+    seniorityLevel = 'Junior';
+  }
+
+  // 3. Department
+  let department = 'Engineering';
+  if (lower.includes('product')) department = 'Product';
+  else if (lower.includes('marketing')) department = 'Marketing';
+  else if (lower.includes('sales')) department = 'Sales';
+  else if (lower.includes('hr') || lower.includes('human resources')) department = 'HR';
+  else if (lower.includes('finance') || lower.includes('accounting')) department = 'Finance';
+  else if (lower.includes('operations')) department = 'Operations';
+
+  // 4. Industry
+  let industry = 'Tech';
+  if (lower.includes('fintech')) industry = 'FinTech';
+  else if (lower.includes('healthcare')) industry = 'Healthcare';
+  else if (lower.includes('saas')) industry = 'SaaS';
+  else if (lower.includes('e-commerce') || lower.includes('ecommerce')) industry = 'E-Commerce';
+  else if (lower.includes('cybersecurity')) industry = 'Cybersecurity';
+
+  // 5. Role Type
+  let roleType = 'Full-time';
+  if (lower.includes('part-time') || lower.includes('part time')) roleType = 'Part-time';
+  else if (lower.includes('contract') || lower.includes('contractor')) roleType = 'Contract';
+  else if (lower.includes('internship') || lower.includes('intern')) roleType = 'Internship';
+
+  return { jobTitle, seniorityLevel, department, industry, roleType };
+}
+
+/**
  * analyze(extracted, jobDescription) → full ATS report object
  *
  * @param {Object} extracted - output from resumeParserService.parse().extracted
@@ -425,13 +498,54 @@ function analyze(extracted, jobDescription) {
   const weaknesses   = deriveWeaknesses(skillsResult, expResult, kwResult, eduResult, certResult, structResult);
   const recommendations = buildRecommendations(skillsResult, kwResult, expResult, structResult, atsScore);
 
+  // ── Step 1: Job Description Understanding ──
+  const jdUnderstanding = understandJd(jobDescription);
+
+  // ── Step 4: Education analysis gaps ──
+  const education_gaps = eduResult.gaps || [];
+
+  // ── Step 5: Experience analysis gaps ──
+  const experience_gaps = [];
+  const requiredExp = extractRequiredYears(jobDescription);
+  const actualExp   = countResumeYears(extracted.experience || []);
+  if (requiredExp > actualExp) {
+    experience_gaps.push(`Experience Gap: Required ${requiredExp}+ years of experience, but resume shows ~${actualExp} years.`);
+  }
+
+  // ── Step 6: Domain gaps ──
+  const jdDomains = skillsResult.jdSkills.filter(js => DOMAIN_EXPERTISE.has(js.toLowerCase()));
+  const resumeDomains = filterAndNormalizeSkills(extracted.skills || []).filter(rs => DOMAIN_EXPERTISE.has(rs.toLowerCase()));
+  const domain_gaps = jdDomains
+    .filter(d => !resumeDomains.map(normForCompare).includes(normForCompare(d)))
+    .map(d => {
+      const { normalized } = validateSkill(d);
+      return normalized || d;
+    });
+
+  // ── Certifications mapping ──
+  const matched_certifications = (certResult.matched || []).map(c => {
+    const { normalized } = validateSkill(c);
+    return normalized || c;
+  });
+  const missing_certifications = (certResult.missing || []).map(c => {
+    const { normalized } = validateSkill(c);
+    return normalized || c;
+  });
+
   return {
-    // ── Top-level summary ──
-    ats_score:  atsScore,
+    // ── REQUIRED OUTPUT FORMAT ──
+    matched_skills:       skillsResult.matched,
+    missing_skills:       skillsResult.missing,
+    matched_certifications,
+    missing_certifications,
+    education_gaps,
+    experience_gaps,
+    domain_gaps,
+    ats_score:            atsScore,
+
+    // ── Legacy / UI compatibility fields ──
     grade,
     match_level: matchLevel,
-
-    // ── Score breakdown ──
     score_breakdown: {
       skills_match:         skillsResult.score,
       experience_match:     expResult.score,
@@ -440,10 +554,6 @@ function analyze(extracted, jobDescription) {
       certifications_match: certResult.score,
       structure_score:      structResult.score,
     },
-
-    // ── Report data ──
-    matched_skills:       skillsResult.matched,
-    missing_skills:       skillsResult.missing,
     matched_keywords:     kwResult.matched,
     missing_keywords:     kwResult.missing,
     experience_analysis:  expResult.analysis,
@@ -452,17 +562,12 @@ function analyze(extracted, jobDescription) {
     strengths,
     weaknesses,
     recommendations,
-
-    // ── UI data ──
     categories,
-
-    // ── Verdict (legacy field for UI compatibility) ──
     verdict:      matchLevel,
     verdictClass: grade.toLowerCase().replace('+', '-plus'),
-
-    // ── Legacy missing keywords (for UI compatibility) ──
     missing: [...new Set([...skillsResult.missing, ...kwResult.missing])].slice(0, 10),
     tips:    recommendations,
+    job_understanding: jdUnderstanding,
   };
 }
 

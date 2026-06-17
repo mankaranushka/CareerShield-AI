@@ -12,6 +12,7 @@
 
 const { PDFParse } = require('pdf-parse');
 const mammoth  = require('mammoth');
+const { filterAndNormalizeSkills } = require('./skillValidator');
 
 // ─── Text Extraction ──────────────────────────────────────────────────────────
 
@@ -231,14 +232,14 @@ function extractSkills(text) {
     'skills', 'technical skills', 'core competencies', 'technologies', 'tools', 'tech stack',
   ]);
 
-  const found = new Set();
+  const rawFound = new Set();
 
   // Parse from skills section: split by commas, pipes, bullets, newlines
   if (skillsText) {
     const tokens = skillsText.split(/[,|\n•\-·▪▸►✓✔◦‣⁃]+/).map(t => t.trim()).filter(t => t.length > 0 && t.length < 50);
     for (const token of tokens) {
       if (!/^\d+$/.test(token) && token.length > 1) {
-        found.add(normalizeSkill(token));
+        rawFound.add(normalizeSkill(token));
       }
     }
   }
@@ -247,11 +248,14 @@ function extractSkills(text) {
   for (const skill of COMMON_TECH_SKILLS) {
     const pattern = new RegExp(`\\b${skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
     if (pattern.test(text)) {
-      found.add(skill); // Use canonical casing
+      rawFound.add(skill); // Use canonical casing
     }
   }
 
-  return [...found].filter(s => s.length > 0).slice(0, 40); // Cap at 40 skills
+  // ── Filter through skill validator to remove junk, normalize, and deduplicate ──
+  const validated = filterAndNormalizeSkills([...rawFound].filter(s => s && s.length > 0));
+
+  return validated.slice(0, 40); // Cap at 40 skills
 }
 
 function normalizeSkill(skill) {
