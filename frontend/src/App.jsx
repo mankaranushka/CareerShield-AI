@@ -20,14 +20,14 @@ import { AnimatePresence } from 'framer-motion';
 import NotFound from './components/NotFound';
 import ScrollToTop from './components/ScrollToTop';
 
-const Home = () => (
+const Home = ({ onOpenChat }) => (
   <>
     <div className="pt-24 pb-4">
       <Marquee speed={35} />
     </div>
     <Hero />
     <ThreatLandscape />
-    <Features />
+    <Features onOpenChat={onOpenChat} />
     <HowItWorks />
     <Footer />
   </>
@@ -43,7 +43,7 @@ function App() {
       <main>
         <Routes>
           {/* Public Routes */}
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<Home onOpenChat={() => setIsChatOpen(true)} />} />
           <Route path="/about" element={<About />} />
           <Route path="/contact" element={<ContactUs />} />
 

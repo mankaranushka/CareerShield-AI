@@ -29,12 +29,77 @@ body {
   .gradient-text {
     color: transparent;
     background-clip: text;
-    background-image: linear-gradient(to right, var(--color-emerald-500), var(--color-emerald-400));
+    background-image: linear-gradient(to right, var(--color-emerald-400), var(--color-teal-300), var(--color-indigo-400));
+  }
+  .gradient-text-blue {
+    color: transparent;
+    background-clip: text;
+    background-image: linear-gradient(to right, var(--color-blue-400), var(--color-cyan-300), var(--color-indigo-400));
   }
   .glass {
-    background-color: rgb(31 41 55 / 0.5); /* gray-800/50 */
-    backdrop-filter: blur(12px);
-    border: 1px solid rgb(55 65 81 / 0.5); /* gray-700/50 */
-    border-radius: 1rem;
+    background-color: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 1.25rem;
+  }
+  .glass-card {
+    background: rgba(10, 10, 18, 0.6);
+    backdrop-filter: blur(20px) saturate(190%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  }
+  .bg-grid-pattern {
+    background-image: 
+      linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 50px 50px;
+  }
+  .bg-dot-pattern {
+    background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .glowing-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(100px);
+    mix-blend-mode: screen;
+    opacity: 0.35;
+    pointer-events: none;
+  }
+  .glow-border-animate {
+    position: relative;
+    overflow: hidden;
+  }
+  .glow-border-animate::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.3), transparent);
+    z-index: 0;
+    animation: move-border 4s linear infinite;
   }
 }
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-15px) scale(1.03); }
+}
+
+@keyframes float-medium {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-25px) rotate(5deg); }
+}
+
+@keyframes move-border {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-float-slow {
+  animation: float-slow 8s ease-in-out infinite;
+}
+
+.animate-float-medium {
+  animation: float-medium 6s ease-in-out infinite;
+}
+
